@@ -1,7 +1,12 @@
-use std::env;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
+use std::path::PathBuf;
+
+#[macro_use]
+extern crate clap;
+
+use clap::Parser;
 
 struct Rng {
     state: u64,
@@ -33,37 +38,54 @@ struct Color {
     a: u8,
 }
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
+const HELP_TEMPLATE: &str = "{name} {version}
 
-    if args.len() != 3 {
-        eprintln!("usage: {} <seed> <output_path>", args[0]);
-        eprintln!("example: {} 12345 fractal.png", args[0]);
-        std::process::exit(1);
-    }
+{author-with-newline}{about-with-newline}
+{usage-heading} {usage}
 
-    let seed: u64 = args[1].parse().unwrap_or_else(|_| {
-        eprintln!("error: seed must be a number");
-        std::process::exit(1);
-    });
+{all-args}
+";
 
-    let output_path = &args[2];
+/// Simple fractal generator
+#[derive(Parser, Debug)]
+#[command(author(crate_authors!("\n")), version, help_template = HELP_TEMPLATE)]
+struct Args {
+    /// RNG seed (number)
+    seed: u64,
 
-    generate_fractal(seed, output_path);
+    /// Output path for the PNG (e.g. fractal.png)
+    output: PathBuf,
+
+    /// Border radius for the image corners (in px)
+    #[arg(short, long, default_value_t = 0)]
+    border_radius: u32,
+
+    /// Image width in pixels
+    #[arg(short, long, default_value_t = 800)]
+    width: u32,
+
+    /// Image height in pixels
+    #[arg(short = 'H', long, default_value_t = 800)]
+    height: u32,
+
+    /// Disable anti-aliasing
+    #[arg(short, long, default_value_t = false)]
+    disable_antialias: bool,
 }
 
-fn generate_fractal(seed: u64, output_path: &str) {
-    let width = 800u32;
-    let height = 800u32;
+fn main() {
+    let args = Args::parse();
 
-    let mut rng = Rng::new(seed);
+    let output_path = args.output.to_string_lossy();
 
-    let mut buffer = vec![255u8; (width * height * 4) as usize];
+    let mut rng = Rng::new(args.seed);
+
+    let mut buffer = vec![255u8; (args.width * args.height * 4) as usize];
 
     let palette = generate_palette(&mut rng);
 
     let bg_color = &palette[0];
-    for i in 0..(width * height) as usize {
+    for i in 0..(args.width * args.height) as usize {
         buffer[i * 4] = bg_color.r;
         buffer[i * 4 + 1] = bg_color.g;
         buffer[i * 4 + 2] = bg_color.b;
@@ -73,16 +95,84 @@ fn generate_fractal(seed: u64, output_path: &str) {
     let pattern_type = (rng.next() % 3) as usize;
 
     match pattern_type {
-        0 => draw_concentric_circles(&mut buffer, width, height, &mut rng, &palette),
-        1 => draw_nested_squares(&mut buffer, width, height, &mut rng, &palette),
-        _ => draw_radial_pattern(&mut buffer, width, height, &mut rng, &palette),
+        0 => draw_concentric_circles(&mut buffer, args.width, args.height, &mut rng, &palette),
+        1 => draw_nested_squares(&mut buffer, args.width, args.height, &mut rng, &palette),
+        _ => draw_radial_pattern(&mut buffer, args.width, args.height, &mut rng, &palette),
     }
 
-    save_png(&buffer, width, height, output_path);
+    if args.border_radius > 0 {
+        let radius = args.border_radius as f32;
+        for y in 0..args.height {
+            for x in 0..args.width {
+                let dx = if x < radius as u32 {
+                    radius - x as f32
+                } else if x >= args.width - radius as u32 {
+                    x as f32 - (args.width - radius as u32) as f32
+                } else {
+                    0.0
+                };
+
+                let dy = if y < radius as u32 {
+                    radius - y as f32
+                } else if y >= args.height - radius as u32 {
+                    y as f32 - (args.height - radius as u32) as f32
+                } else {
+                    0.0
+                };
+
+                if dx > 0.0 && dy > 0.0 && (dx * dx + dy * dy) > (radius * radius) {
+                    let idx = ((y * args.width + x) * 4) as usize;
+                    buffer[idx + 3] = 0; // Set alpha to 0
+                }
+            }
+        }
+    }
+
+    if !args.disable_antialias {
+        antialias(&mut buffer, args.width, args.height);
+    }
+
+    save_png(&buffer, args.width, args.height, &output_path);
     println!(
         "Fractal generated with seed {} and saved to {}",
-        seed, output_path
+        args.seed, output_path
     );
+}
+
+fn antialias(buffer: &mut [u8], width: u32, height: u32) {
+    let temp_buffer = buffer.to_vec();
+
+    for y in 0..height {
+        for x in 0..width {
+            let mut r_sum = 0u32;
+            let mut g_sum = 0u32;
+            let mut b_sum = 0u32;
+            let mut a_sum = 0u32;
+            let mut count = 0u32;
+
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    let nx = x as i32 + dx;
+                    let ny = y as i32 + dy;
+
+                    if nx >= 0 && nx < width as i32 && ny >= 0 && ny < height as i32 {
+                        let idx = ((ny as u32 * width + nx as u32) * 4) as usize;
+                        r_sum += temp_buffer[idx] as u32;
+                        g_sum += temp_buffer[idx + 1] as u32;
+                        b_sum += temp_buffer[idx + 2] as u32;
+                        a_sum += temp_buffer[idx + 3] as u32;
+                        count += 1;
+                    }
+                }
+            }
+
+            let idx = ((y * width + x) * 4) as usize;
+            buffer[idx] = (r_sum / count) as u8;
+            buffer[idx + 1] = (g_sum / count) as u8;
+            buffer[idx + 2] = (b_sum / count) as u8;
+            buffer[idx + 3] = (a_sum / count) as u8;
+        }
+    }
 }
 
 fn generate_palette(rng: &mut Rng) -> Vec<Color> {
