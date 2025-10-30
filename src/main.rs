@@ -5,8 +5,9 @@ use std::path::PathBuf;
 
 #[macro_use]
 extern crate clap;
-
 use clap::Parser;
+
+mod antialias;
 
 struct Rng {
     state: u64,
@@ -129,7 +130,7 @@ fn main() {
     }
 
     if !args.disable_antialias {
-        antialias(&mut buffer, args.width, args.height);
+        antialias::antialias(&mut buffer, args.width, args.height);
     }
 
     save_png(&buffer, args.width, args.height, &output_path);
@@ -137,42 +138,6 @@ fn main() {
         "Fractal generated with seed {} and saved to {}",
         args.seed, output_path
     );
-}
-
-fn antialias(buffer: &mut [u8], width: u32, height: u32) {
-    let temp_buffer = buffer.to_vec();
-
-    for y in 0..height {
-        for x in 0..width {
-            let mut r_sum = 0u32;
-            let mut g_sum = 0u32;
-            let mut b_sum = 0u32;
-            let mut a_sum = 0u32;
-            let mut count = 0u32;
-
-            for dy in -1..=1 {
-                for dx in -1..=1 {
-                    let nx = x as i32 + dx;
-                    let ny = y as i32 + dy;
-
-                    if nx >= 0 && nx < width as i32 && ny >= 0 && ny < height as i32 {
-                        let idx = ((ny as u32 * width + nx as u32) * 4) as usize;
-                        r_sum += temp_buffer[idx] as u32;
-                        g_sum += temp_buffer[idx + 1] as u32;
-                        b_sum += temp_buffer[idx + 2] as u32;
-                        a_sum += temp_buffer[idx + 3] as u32;
-                        count += 1;
-                    }
-                }
-            }
-
-            let idx = ((y * width + x) * 4) as usize;
-            buffer[idx] = (r_sum / count) as u8;
-            buffer[idx + 1] = (g_sum / count) as u8;
-            buffer[idx + 2] = (b_sum / count) as u8;
-            buffer[idx + 3] = (a_sum / count) as u8;
-        }
-    }
 }
 
 fn generate_palette(rng: &mut Rng) -> Vec<Color> {
