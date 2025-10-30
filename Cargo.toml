@@ -2,6 +2,8 @@
 name = "fractal"
 version = "0.1.0"
 edition = "2024"
+authors = ["Joe Banks <joe@jb3.dev>"]
 
 [dependencies]
 png = "0.18"
+clap = { version = "4.5", features = ["derive", "cargo"] }
